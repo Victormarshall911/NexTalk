@@ -1,24 +1,45 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import 'react-native-reanimated';
+import { ThemeProvider } from '@/context/ThemeContext'; // <--- IMPORT
+import { supabase } from '@/lib/supabase';
+import { Slot, useRouter, useSegments } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, View } from 'react-native';
 
-import { useColorScheme } from '@/hooks/use-color-scheme';
+function RootLayoutNav() {
+  const [session, setSession] = useState<any>(null);
+  const [initialized, setInitialized] = useState(false);
+  const segments = useSegments();
+  const router = useRouter();
 
-export const unstable_settings = {
-  anchor: '(tabs)',
-};
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setInitialized(true);
+    });
 
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!initialized) return;
+    const inAuthGroup = segments[0] === '(auth)';
+    if (session && inAuthGroup) router.replace('/(tabs)');
+    else if (!session && !inAuthGroup) router.replace('/(auth)/login');
+  }, [session, initialized, segments]);
+
+  if (!initialized) return <View style={{ flex: 1, justifyContent: 'center' }}><ActivityIndicator /></View>;
+
+  return <Slot />;
+}
+
+// Wrap the main layout with ThemeProvider
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
-
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-      </Stack>
-      <StatusBar style="auto" />
+    <ThemeProvider>
+      <RootLayoutNav />
     </ThemeProvider>
   );
 }

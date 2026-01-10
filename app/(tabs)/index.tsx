@@ -1,98 +1,97 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import { useTheme } from '@/context/ThemeContext'; // <--- Import Hook
+import { supabase } from '@/lib/supabase';
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { FlatList, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+export default function UsersList() {
+  const { colors } = useTheme(); // <--- Get Colors
+  const [users, setUsers] = useState<any[]>([]);
+  const [filteredUsers, setFilteredUsers] = useState<any[]>([]);
+  const [search, setSearch] = useState('');
+  const router = useRouter();
 
-export default function HomeScreen() {
+  useEffect(() => {
+    // ... (Your existing fetch logic) ...
+    const fetchUsers = async () => {
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      const { data } = await supabase.from('profiles').select('*');
+      if (data && currentUser) {
+        const others = data.filter(u => u.id !== currentUser.id);
+        setUsers(others);
+        setFilteredUsers(others);
+      }
+    };
+    fetchUsers();
+  }, []);
+
+  const handleSearch = (text: string) => {
+    setSearch(text);
+    if (text) {
+      const filtered = users.filter(user => 
+        (user.full_name || '').toLowerCase().includes(text.toLowerCase())
+      );
+      setFilteredUsers(filtered);
+    } else {
+      setFilteredUsers(users);
+    }
+  };
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+      <View style={[styles.header, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>People</Text>
+        
+        {/* Search Box */}
+        <View style={[styles.searchContainer, { backgroundColor: colors.inputBackground }]}>
+          <Ionicons name="search" size={20} color={colors.subText} style={{marginRight: 10}} />
+          <TextInput 
+            placeholder="Search for friends..." 
+            style={[styles.searchInput, { color: colors.text }]} // <--- Dynamic Text Color
+            value={search}
+            onChangeText={handleSearch}
+            placeholderTextColor={colors.subText} // <--- Dynamic Placeholder
+          />
+        </View>
+      </View>
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+      <FlatList
+        data={filteredUsers}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={{ paddingBottom: 20 }}
+        renderItem={({ item }) => (
+          <TouchableOpacity 
+            style={[styles.userCard, { backgroundColor: colors.card }]} 
+            onPress={() => router.push(`/chat/${item.id}`)}
+          >
+            <View style={[styles.avatarContainer, { backgroundColor: colors.inputBackground }]}>
+              <Text style={[styles.avatarText, { color: colors.tint }]}>
+                {item.full_name ? item.full_name.charAt(0).toUpperCase() : '?'}
+              </Text>
+            </View>
+            <View style={styles.textContainer}>
+              <Text style={[styles.userName, { color: colors.text }]}>{item.full_name || 'Unknown'}</Text>
+              <Text style={[styles.userEmail, { color: colors.subText }]}>{item.email}</Text>
+            </View>
+            <Ionicons name="chatbubble-outline" size={24} color={colors.tint} />
+          </TouchableOpacity>
+        )}
+      />
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
-  },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
-  },
+  container: { flex: 1 },
+  header: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 15, borderBottomWidth: 1 },
+  headerTitle: { fontSize: 28, fontWeight: '800', marginBottom: 15 },
+  searchContainer: { flexDirection: 'row', alignItems: 'center', borderRadius: 10, paddingHorizontal: 10, height: 40 },
+  searchInput: { flex: 1, fontSize: 16 },
+  userCard: { flexDirection: 'row', alignItems: 'center', padding: 15, marginTop: 1 },
+  avatarContainer: { width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', marginRight: 15 },
+  avatarText: { fontSize: 20, fontWeight: '600' },
+  textContainer: { flex: 1 },
+  userName: { fontSize: 16, fontWeight: '600' },
+  userEmail: { fontSize: 14 },
 });
