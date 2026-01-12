@@ -1,7 +1,7 @@
 import { useTheme } from '@/context/ThemeContext';
 import { supabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router'; // <--- Import Stack
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Bubble, Composer, GiftedChat, IMessage, InputToolbar, Send } from 'react-native-gifted-chat';
@@ -14,7 +14,7 @@ export default function ChatScreen() {
 
   const [messages, setMessages] = useState<IMessage[]>([]);
   const [currentUser, setCurrentUser] = useState<any>(null);
-  const [receiverName, setReceiverName] = useState('Loading...'); // Changed default from 'Chat'
+  const [receiverName, setReceiverName] = useState('Loading...'); 
   const [loading, setLoading] = useState(true);
 
   // 1. Get User Data
@@ -28,12 +28,20 @@ export default function ChatScreen() {
 
       // Get Them
       if (receiverId) {
-        const { data } = await supabase.from('profiles').select('full_name').eq('id', receiverId).single();
-        if (data) setReceiverName(data.full_name);
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('full_name, email') 
+          .eq('id', receiverId)
+          .single();
+
+        if (data) {
+          setReceiverName(data.full_name || data.email || 'Unknown User');
+        }
       }
       setLoading(false);
     };
-    fetchData();
+
+    fetchData(); // <--- THIS WAS MISSING! It forces the data to load.
   }, [receiverId]);
 
   // 2. Real-time Subscription
@@ -143,11 +151,8 @@ export default function ChatScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      
-      {/* 1. HIDE THE DEFAULT SYSTEM HEADER */}
       <Stack.Screen options={{ headerShown: false }} />
-
-      {/* 2. CUSTOM HEADER */}
+      
       <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Ionicons name="chevron-back" size={28} color={colors.text} />
@@ -161,12 +166,9 @@ export default function ChatScreen() {
         </View>
       </View>
 
-      {/* 3. KEYBOARD HANDLING WRAPPER */}
       <KeyboardAvoidingView 
         style={{ flex: 1 }}
-        // iOS needs 'padding', Android often works better with 'height' or undefined
         behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
-        // Offset accounts for the header height so the input isn't hidden behind keyboard
         keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0} 
       >
         <GiftedChat

@@ -1,11 +1,11 @@
-import { useTheme } from '@/context/ThemeContext'; // <--- Import Hook
+import { useTheme } from '@/context/ThemeContext';
 import { supabase } from '@/lib/supabase';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 export default function ChatsScreen() {
-  const { colors } = useTheme(); // <--- Get Colors
+  const { colors } = useTheme();
   const [conversations, setConversations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
@@ -17,33 +17,57 @@ export default function ChatsScreen() {
   );
 
   const fetchConversations = async () => {
-    // ... (Your existing fetch logic remains exactly the same) ...
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    const { data, error } = await supabase
+    // 1. Fetch latest messages involving me
+    const { data: messages, error } = await supabase
       .from('messages')
       .select('*')
       .or(`user_id.eq.${user.id},receiver_id.eq.${user.id}`)
       .order('created_at', { ascending: false });
 
-    if (error) {
+    if (error || !messages) {
       setLoading(false);
       return;
     }
 
+    // 2. Identify who we are talking to
     const conversationMap = new Map();
-    data.forEach((msg) => {
+    const otherUserIds = new Set(); 
+
+    messages.forEach((msg) => {
+      // Determine the "Other" person's ID
       const otherUserId = msg.user_id === user.id ? msg.receiver_id : msg.user_id;
+      
       if (!conversationMap.has(otherUserId)) {
+        otherUserIds.add(otherUserId);
         conversationMap.set(otherUserId, {
           id: otherUserId,
           lastMessage: msg.text,
           date: new Date(msg.created_at),
-          name: msg.user_id === user.id ? 'Chat' : msg.user_name, 
+          name: 'Loading...', // Temporary placeholder
         });
       }
     });
+
+    // 3. Fetch REAL Profiles for these users to get correct names
+    if (otherUserIds.size > 0) {
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, full_name, email')
+        .in('id', Array.from(otherUserIds));
+
+      if (profiles) {
+        profiles.forEach(profile => {
+          const conversation = conversationMap.get(profile.id);
+          if (conversation) {
+            // Use the Real Name from Profile
+            conversation.name = profile.full_name || profile.email || 'Unknown';
+          }
+        });
+      }
+    }
 
     setConversations(Array.from(conversationMap.values()));
     setLoading(false);
@@ -51,7 +75,7 @@ export default function ChatsScreen() {
 
   const renderItem = ({ item }: { item: any }) => (
     <TouchableOpacity 
-      style={[styles.card, { borderBottomColor: colors.border }]} // <--- Dynamic Border
+      style={[styles.card, { borderBottomColor: colors.border }]} 
       onPress={() => router.push(`/chat/${item.id}`)}
     >
       <View style={[styles.avatar, { backgroundColor: colors.inputBackground }]}> 
@@ -61,12 +85,14 @@ export default function ChatsScreen() {
       </View>
       <View style={styles.content}>
         <View style={styles.row}>
-          <Text style={[styles.name, { color: colors.text }]}>{item.name || 'User'}</Text> 
+          <Text style={[styles.name, { color: colors.text }]}>{item.name}</Text> 
           <Text style={[styles.time, { color: colors.subText }]}>
             {item.date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </Text>
         </View>
-        <Text style={[styles.message, { color: colors.subText }]} numberOfLines={1}>{item.lastMessage}</Text>
+        <Text style={[styles.message, { color: colors.subText }]} numberOfLines={1}>
+          {item.lastMessage}
+        </Text>
       </View>
     </TouchableOpacity>
   );
@@ -79,7 +105,16 @@ export default function ChatsScreen() {
         <Text style={[styles.headerTitle, { color: colors.text }]}>Chats</Text>
       </View>
       
-      <FlatList data={conversations} renderItem={renderItem} keyExtractor={item => item.id} />
+      <FlatList 
+        data={conversations} 
+        renderItem={renderItem} 
+        keyExtractor={item => item.id}
+        ListEmptyComponent={
+            <View style={styles.emptyState}>
+                 <Text style={{color: colors.subText, fontSize: 16}}>No conversations yet</Text>
+            </View>
+        }
+      />
     </View>
   );
 }
@@ -97,4 +132,5 @@ const styles = StyleSheet.create({
   name: { fontSize: 16, fontWeight: '700' },
   time: { fontSize: 12 },
   message: { fontSize: 14 },
+  emptyState: { flex: 1, alignItems: 'center', marginTop: 50 }
 });
