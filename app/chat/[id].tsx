@@ -6,6 +6,31 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Bubble, Composer, GiftedChat, IMessage, InputToolbar, Send } from 'react-native-gifted-chat';
 
+// --- HELPER FUNCTION: Send Push Notification ---
+const sendPushNotification = async (expoPushToken: string, title: string, body: string) => {
+  const message = {
+    to: expoPushToken,
+    sound: 'default',
+    title: title,
+    body: body,
+    data: { someData: 'goes here' },
+  };
+
+  try {
+    await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Accept-encoding': 'gzip, deflate',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(message),
+    });
+  } catch (error) {
+    console.error("Failed to send notification:", error);
+  }
+};
+
 export default function ChatScreen() {
   const { id } = useLocalSearchParams(); 
   const receiverId = Array.isArray(id) ? id[0] : id;
@@ -41,7 +66,7 @@ export default function ChatScreen() {
       setLoading(false);
     };
 
-    fetchData(); // <--- THIS WAS MISSING! It forces the data to load.
+    fetchData(); 
   }, [receiverId]);
 
   // 2. Real-time Subscription
@@ -85,17 +110,49 @@ export default function ChatScreen() {
     return () => { supabase.removeChannel(channel); };
   }, [currentUser, receiverId]);
 
+  // 3. Send Message Logic (Updated with Notifications)
   const onSend = useCallback(async (newMessages: IMessage[] = []) => {
     if (!currentUser) return;
+    
+    // A. Update UI immediately
     setMessages(prev => GiftedChat.append(prev, newMessages));
     const { text } = newMessages[0];
-    await supabase.from('messages').insert({
+
+    // B. Save to Database
+    const { error } = await supabase.from('messages').insert({
       text,
       user_id: currentUser._id,
       receiver_id: receiverId,
       user_name: currentUser.name,
       created_at: new Date(),
     });
+
+    if (error) {
+      console.error("Error sending message to DB:", error);
+      return;
+    }
+
+    // C. Send Push Notification
+    try {
+      // Fetch the receiver's push token
+      const { data: receiverProfile } = await supabase
+        .from('profiles')
+        .select('push_token')
+        .eq('id', receiverId)
+        .single();
+
+      // If they have a token, fire the notification
+      if (receiverProfile?.push_token) {
+        await sendPushNotification(
+          receiverProfile.push_token, 
+          currentUser.name, // Title: Sender's Name
+          text              // Body: The Message
+        );
+      }
+    } catch (pushError) {
+      console.log("Notification check failed (message sent anyway):", pushError);
+    }
+
   }, [currentUser, receiverId]);
 
   // UI Components
@@ -179,7 +236,6 @@ export default function ChatScreen() {
           renderInputToolbar={renderInputToolbar}
           renderComposer={renderComposer}
           renderSend={renderSend}
-          // showAvatarForEveryMessage={false} 
         />
       </KeyboardAvoidingView>
     </SafeAreaView>

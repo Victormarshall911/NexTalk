@@ -1,16 +1,75 @@
-import { useTheme } from '@/context/ThemeContext'; // <--- IMPORT HOOK
+import { useTheme } from '@/context/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
+import * as Notifications from 'expo-notifications'; // Import Notifications
 import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
-import { SafeAreaView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useState } from 'react'; // Added useEffect
+import { Alert, Linking, SafeAreaView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { supabase } from '../lib/supabase'; // Import Supabase if you want to save the token
+import { registerForPushNotificationsAsync } from '../utils/registerForPushNotifications'; // <--- Import your helper
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { colors, isDark, toggleTheme } = useTheme(); // <--- USE HOOK
-  const [notifications, setNotifications] = useState(true);
+  const { colors, isDark, toggleTheme } = useTheme();
+  const [notifications, setNotifications] = useState(false); // Default to false until we check
+
+  // 1. Check current permission status when screen loads
+  useEffect(() => {
+    checkPermissionStatus();
+  }, []);
+
+  const checkPermissionStatus = async () => {
+    const { status } = await Notifications.getPermissionsAsync();
+    setNotifications(status === 'granted');
+  };
+
+  // 2. Handle the Toggle Action
+  const handleNotificationToggle = async (value: boolean) => {
+    if (value) {
+      // User is trying to turn ON notifications
+      const token = await registerForPushNotificationsAsync();
+      
+      if (token) {
+        setNotifications(true);
+        // OPTIONAL: Save token to Supabase for the current user
+        saveTokenToSupabase(token);
+      } else {
+        // If they declined permissions previously, we might need to send them to settings
+        setNotifications(false);
+        Alert.alert(
+          "Permission Required",
+          "Please enable notifications in your phone settings to receive updates.",
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Open Settings", onPress: () => Linking.openSettings() }
+          ]
+        );
+      }
+    } else {
+      // User is trying to turn OFF notifications
+      // Note: You can't programmatically revoke permissions on iOS/Android.
+      // You can only stop sending them from your server or tell the user to go to settings.
+      setNotifications(false);
+      Alert.alert("Notifications Disabled", "You won't receive updates anymore.");
+    }
+  };
+
+  const saveTokenToSupabase = async (token: string) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { error } = await supabase
+        .from('profiles') // Ensure you have a 'profiles' table
+        .update({ push_token: token })
+        .eq('id', user.id);
+
+      if (error) console.error("Error saving token:", error);
+    } catch (e) {
+      console.error("Supabase error:", e);
+    }
+  }
 
   return (
-    // Replace hardcoded colors with `colors.xyz`
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
@@ -31,14 +90,14 @@ export default function SettingsScreen() {
           <Switch
             trackColor={{ false: '#767577', true: colors.tint }}
             thumbColor={'#fff'}
-            onValueChange={toggleTheme} // <--- CALL FUNCTION
-            value={isDark} // <--- BIND TO STATE
+            onValueChange={toggleTheme}
+            value={isDark}
           />
         </View>
 
         <View style={[styles.separator, { backgroundColor: colors.border }]} />
 
-        {/* Notifications (Dummy for now) */}
+        {/* Notifications */}
         <View style={styles.row}>
           <View style={styles.rowLeft}>
              <View style={[styles.iconContainer, { backgroundColor: isDark ? '#374151' : '#FEF3C7' }]}>
@@ -49,7 +108,7 @@ export default function SettingsScreen() {
           <Switch
             trackColor={{ false: '#767577', true: colors.tint }}
             thumbColor={'#fff'}
-            onValueChange={setNotifications}
+            onValueChange={handleNotificationToggle} // <--- UPDATED HANDLER
             value={notifications}
           />
         </View>
