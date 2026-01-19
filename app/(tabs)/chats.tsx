@@ -1,7 +1,7 @@
 import { useTheme } from '@/context/ThemeContext';
 import { supabase } from '@/lib/supabase';
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 export default function ChatsScreen() {
@@ -9,18 +9,27 @@ export default function ChatsScreen() {
   const [conversations, setConversations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
+  
+  // Ref to track current user ID for the realtime subscription
+  const currentUserId = useRef<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
       fetchConversations();
+      
+      // Cleanup subscription on unmount/blur if needed (optional)
+      return () => {
+        supabase.removeAllChannels();
+      };
     }, [])
   );
 
   const fetchConversations = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
+    currentUserId.current = user.id;
 
-    // 1. Fetch latest messages involving me
+    // 1. Fetch ALL messages involving me (ordered newest first)
     const { data: messages, error } = await supabase
       .from('messages')
       .select('*')
@@ -32,26 +41,35 @@ export default function ChatsScreen() {
       return;
     }
 
-    // 2. Identify who we are talking to
+    // 2. Process Messages into Conversations
     const conversationMap = new Map();
     const otherUserIds = new Set(); 
 
     messages.forEach((msg) => {
-      // Determine the "Other" person's ID
-      const otherUserId = msg.user_id === user.id ? msg.receiver_id : msg.user_id;
+      const isMe = msg.user_id === user.id;
+      const otherUserId = isMe ? msg.receiver_id : msg.user_id;
       
+      // Initialize conversation if not exists
       if (!conversationMap.has(otherUserId)) {
         otherUserIds.add(otherUserId);
         conversationMap.set(otherUserId, {
           id: otherUserId,
           lastMessage: msg.text,
           date: new Date(msg.created_at),
-          name: 'Loading...', // Temporary placeholder
+          name: 'Loading...',
+          unreadCount: 0, // <--- Init Count
         });
+      }
+
+      // 3. Count Unread Messages
+      // If I am NOT the sender, and it is NOT read, add to count
+      if (!isMe && msg.is_read === false) {
+        const conv = conversationMap.get(otherUserId);
+        conv.unreadCount += 1;
       }
     });
 
-    // 3. Fetch REAL Profiles for these users to get correct names
+    // 4. Fetch Names
     if (otherUserIds.size > 0) {
       const { data: profiles } = await supabase
         .from('profiles')
@@ -62,7 +80,6 @@ export default function ChatsScreen() {
         profiles.forEach(profile => {
           const conversation = conversationMap.get(profile.id);
           if (conversation) {
-            // Use the Real Name from Profile
             conversation.name = profile.full_name || profile.email || 'Unknown';
           }
         });
@@ -71,6 +88,28 @@ export default function ChatsScreen() {
 
     setConversations(Array.from(conversationMap.values()));
     setLoading(false);
+    
+    // 5. Setup Realtime Listener for New Messages (Badges)
+    setupRealtimeListener(user.id);
+  };
+
+  const setupRealtimeListener = (userId: string) => {
+    supabase.channel('chats_list_updates')
+      .on(
+        'postgres_changes',
+        { 
+          event: 'INSERT', 
+          schema: 'public', 
+          table: 'messages', 
+          filter: `receiver_id=eq.${userId}` // Only listen for msgs sent TO me
+        },
+        (payload) => {
+          // When a new message arrives, we just re-fetch to keep it simple and accurate
+          // Alternatively, you could manually update the state array for better performance
+          fetchConversations();
+        }
+      )
+      .subscribe();
   };
 
   const renderItem = ({ item }: { item: any }) => (
@@ -90,9 +129,19 @@ export default function ChatsScreen() {
             {item.date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </Text>
         </View>
-        <Text style={[styles.message, { color: colors.subText }]} numberOfLines={1}>
-          {item.lastMessage}
-        </Text>
+        
+        <View style={styles.row}>
+          <Text style={[styles.message, { color: colors.subText }]} numberOfLines={1}>
+            {item.lastMessage}
+          </Text>
+          
+          {/* BADGE COMPONENT */}
+          {item.unreadCount > 0 && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{item.unreadCount}</Text>
+            </View>
+          )}
+        </View>
       </View>
     </TouchableOpacity>
   );
@@ -128,9 +177,20 @@ const styles = StyleSheet.create({
   avatar: { width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', marginRight: 15 },
   avatarText: { fontSize: 20, fontWeight: '700' },
   content: { flex: 1 },
-  row: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }, // Align items center
   name: { fontSize: 16, fontWeight: '700' },
   time: { fontSize: 12 },
-  message: { fontSize: 14 },
-  emptyState: { flex: 1, alignItems: 'center', marginTop: 50 }
+  message: { fontSize: 14, flex: 1 }, // Added flex 1 to push badge to right
+  emptyState: { flex: 1, alignItems: 'center', marginTop: 50 },
+  badge: { 
+    backgroundColor: '#FF3B30', 
+    borderRadius: 10, 
+    minWidth: 20, 
+    height: 20, 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    paddingHorizontal: 4,
+    marginLeft: 10 
+  },
+  badgeText: { color: 'white', fontSize: 12, fontWeight: 'bold' }
 });
